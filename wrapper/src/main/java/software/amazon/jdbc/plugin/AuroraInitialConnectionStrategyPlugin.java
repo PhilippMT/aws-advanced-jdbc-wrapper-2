@@ -54,11 +54,18 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
         }
       });
 
+  // Deprecated. Use "initialConnectionHostSelectorStrategy" instead.
   public static final AwsWrapperProperty READER_HOST_SELECTOR_STRATEGY =
       new AwsWrapperProperty(
           "readerInitialConnectionHostSelectorStrategy",
           "random",
           "The strategy that should be used to select a new reader host while opening a new connection.");
+
+  public static final AwsWrapperProperty HOST_SELECTOR_STRATEGY =
+      new AwsWrapperProperty(
+          "initialConnectionHostSelectorStrategy",
+          "random",
+          "The strategy that should be used to select a host while opening a new connection.");
 
   public static final AwsWrapperProperty OPEN_CONNECTION_RETRY_TIMEOUT_MS =
       new AwsWrapperProperty(
@@ -83,6 +90,8 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
   private final RdsUtils rdsUtils = new RdsUtils();
 
   private final HostRole verifyOpenedConnectionType;
+  private final int retryDelayMs;
+  private final long openConnectionRetryTimeoutNano;
 
   static {
     PropertyDefinition.registerPluginProperties(AuroraInitialConnectionStrategyPlugin.class);
@@ -92,6 +101,10 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
     this.pluginService = pluginService;
     this.verifyOpenedConnectionType =
         HostRole.verifyConnectionTypeFromValue(VERIFY_OPENED_CONNECTION_TYPE.getString(properties));
+    this.retryDelayMs = OPEN_CONNECTION_RETRY_INTERVAL_MS.getInteger(properties);
+    this.openConnectionRetryTimeoutNano =
+        TimeUnit.MILLISECONDS.toNanos(OPEN_CONNECTION_RETRY_TIMEOUT_MS.getInteger(properties));
+
   }
 
   @Override
@@ -127,6 +140,17 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
       return connectFunc.call();
     }
 
+    if (type == RdsUrlType.RDS_CUSTOM_CLUSTER) {
+      Connection candidateConn =
+          this.getVerifiedConnection(props, isInitialConnection, connectFunc);
+      if (candidateConn == null) {
+        // Can't get a connection. Continue with a normal workflow.
+        LOGGER.finest("Continue with normal workflow.");
+        return connectFunc.call();
+      }
+      return candidateConn;
+    }
+
     if (type == RdsUrlType.RDS_WRITER_CLUSTER
         || type == RdsUrlType.RDS_GLOBAL_WRITER_CLUSTER
         || isInitialConnection && this.verifyOpenedConnectionType == HostRole.WRITER) {
@@ -160,10 +184,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
       final JdbcCallable<Connection, SQLException> connectFunc)
       throws SQLException {
 
-    final int retryDelayMs = OPEN_CONNECTION_RETRY_INTERVAL_MS.getInteger(props);
-
-    final long endTimeNano = this.getTime()
-        + TimeUnit.MILLISECONDS.toNanos(OPEN_CONNECTION_RETRY_TIMEOUT_MS.getInteger(props));
+    final long endTimeNano = this.getTime() + this.openConnectionRetryTimeoutNano;
 
     Connection writerCandidateConn;
     HostSpec writerCandidate;
@@ -188,7 +209,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
           if (writerCandidate == null || writerCandidate.getRole() != HostRole.WRITER) {
             // Shouldn't be here. But let's try again.
             this.closeConnection(writerCandidateConn);
-            this.delay(retryDelayMs);
+            this.delay(this.retryDelayMs);
             continue;
           }
 
@@ -205,7 +226,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
           // Force refresh to update the topology.
           this.pluginService.forceRefreshHostList();
           this.closeConnection(writerCandidateConn);
-          this.delay(retryDelayMs);
+          this.delay(this.retryDelayMs);
           continue;
         }
 
@@ -249,10 +270,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
       final JdbcCallable<Connection, SQLException> connectFunc)
       throws SQLException {
 
-    final int retryDelayMs = OPEN_CONNECTION_RETRY_INTERVAL_MS.getInteger(props);
-
-    final long endTimeNano = this.getTime()
-        + TimeUnit.MILLISECONDS.toNanos(OPEN_CONNECTION_RETRY_TIMEOUT_MS.getInteger(props));
+    final long endTimeNano = this.getTime() + this.openConnectionRetryTimeoutNano;
 
     Connection readerCandidateConn;
     HostSpec readerCandidate;
@@ -266,7 +284,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
       readerCandidate = null;
 
       try {
-        readerCandidate = this.getReader(props, awsRegion);
+        readerCandidate = this.getCandidateHost(props, HostRole.READER, awsRegion);
 
         if (readerCandidate == null || this.rdsUtils.isRdsClusterDns(readerCandidate.getHost())) {
 
@@ -277,7 +295,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
 
           if (readerCandidate == null) {
             this.closeConnection(readerCandidateConn);
-            this.delay(retryDelayMs);
+            this.delay(this.retryDelayMs);
             continue;
           }
 
@@ -291,7 +309,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
               return readerCandidateConn;
             }
             this.closeConnection(readerCandidateConn);
-            this.delay(retryDelayMs);
+            this.delay(this.retryDelayMs);
             continue;
           }
 
@@ -318,7 +336,7 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
           }
 
           this.closeConnection(readerCandidateConn);
-          this.delay(retryDelayMs);
+          this.delay(this.retryDelayMs);
           continue;
         }
 
@@ -346,6 +364,89 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
     return null;
   }
 
+  private Connection getVerifiedConnection(
+      final Properties props,
+      final boolean isInitialConnection,
+      final JdbcCallable<Connection, SQLException> connectFunc)
+      throws SQLException {
+
+    final long endTimeNano = this.getTime() + this.openConnectionRetryTimeoutNano;
+
+    Connection candidateConn;
+    HostSpec candidateHost;
+
+    while (this.getTime() < endTimeNano) {
+
+      candidateConn = null;
+      candidateHost = null;
+
+      try {
+        candidateHost = this.getCandidateHost(props, this.verifyOpenedConnectionType, null);
+
+        if (candidateHost == null || this.rdsUtils.isRdsClusterDns(candidateHost.getHost())) {
+
+          // Reader is not found. It seems that topology is outdated.
+          candidateConn = connectFunc.call();
+          this.pluginService.forceRefreshHostList();
+          candidateHost = this.pluginService.identifyConnection(candidateConn);
+
+          if (candidateHost == null) {
+            this.closeConnection(candidateConn);
+            this.delay(this.retryDelayMs);
+            continue;
+          }
+
+          if (isInitialConnection) {
+            hostListProviderService.setInitialConnectionHostSpec(candidateHost);
+          }
+          return candidateConn;
+        }
+
+        candidateConn = this.pluginService.connect(candidateHost, props, this);
+
+        // Verify connection if requested
+        if (this.verifyOpenedConnectionType != null
+            && this.pluginService.getHostRole(candidateConn) != this.verifyOpenedConnectionType) {
+          // Force refresh to update the topology.
+          this.pluginService.forceRefreshHostList();
+
+          if (this.verifyOpenedConnectionType == HostRole.READER && this.hasNoReaders()) {
+            // It seems that cluster has no readers. Simulate Aurora reader cluster endpoint logic
+            // and return the current (writer) connection.
+            if (isInitialConnection) {
+              hostListProviderService.setInitialConnectionHostSpec(candidateHost);
+            }
+            return candidateConn;
+          }
+
+          this.closeConnection(candidateConn);
+          this.delay(this.retryDelayMs);
+          continue;
+        }
+
+        if (isInitialConnection) {
+          hostListProviderService.setInitialConnectionHostSpec(candidateHost);
+        }
+        return candidateConn;
+
+      } catch (SQLException ex) {
+        this.closeConnection(candidateConn);
+        if (this.pluginService.isLoginException(ex, this.pluginService.getTargetDriverDialect())) {
+          throw WrapperUtils.wrapExceptionIfNeeded(SQLException.class, ex);
+        } else {
+          if (candidateHost != null) {
+            this.pluginService.setAvailability(candidateHost.asAliases(), HostAvailability.NOT_AVAILABLE);
+          }
+        }
+      } catch (Throwable ex) {
+        this.closeConnection(candidateConn);
+        throw ex;
+      }
+    }
+
+    return null;
+  }
+
   private void closeConnection(final Connection connection) {
     if (connection != null) {
       try {
@@ -364,19 +465,24 @@ public class AuroraInitialConnectionStrategyPlugin extends AbstractConnectionPlu
     }
   }
 
-  private HostSpec getReader(final Properties props, final @Nullable String awsRegion) throws SQLException {
+  private HostSpec getCandidateHost(
+      final Properties props, final @Nullable HostRole hostRole, final @Nullable String awsRegion)
+      throws SQLException {
 
-    final String strategy = READER_HOST_SELECTOR_STRATEGY.getString(props);
-    if (this.pluginService.acceptsStrategy(HostRole.READER, strategy)) {
+    String strategy = HOST_SELECTOR_STRATEGY.getString(props);
+    if (strategy == null && hostRole == HostRole.READER) {
+      strategy = READER_HOST_SELECTOR_STRATEGY.getString(props);
+    }
+    if (this.pluginService.acceptsStrategy(hostRole, strategy)) {
       try {
         if (!StringUtils.isNullOrEmpty(awsRegion)) {
           final List<HostSpec> hostsInRegion = this.pluginService.getHosts()
               .stream()
               .filter(x -> awsRegion.equalsIgnoreCase(this.rdsUtils.getRdsRegion(x.getHost())))
               .collect(Collectors.toList());
-          return this.pluginService.getHostSpecByStrategy(hostsInRegion, HostRole.READER, strategy);
+          return this.pluginService.getHostSpecByStrategy(hostsInRegion, hostRole, strategy);
         } else {
-          return this.pluginService.getHostSpecByStrategy(HostRole.READER, strategy);
+          return this.pluginService.getHostSpecByStrategy(hostRole, strategy);
         }
       } catch (SQLException ex) {
         // host isn't found
