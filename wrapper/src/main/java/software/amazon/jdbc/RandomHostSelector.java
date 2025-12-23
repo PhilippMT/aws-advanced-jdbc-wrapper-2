@@ -45,10 +45,6 @@ public class RandomHostSelector implements HostSelector {
     }
 
     final int randomIndex = new Random().nextInt(eligibleHosts.size());
-    HostSpec hostSpec = eligibleHosts.get(randomIndex);
-    if (hostSpec.getHostAndPort().startsWith("test-pg-instance-2")) {
-      return hostSpec;
-    }
-    return hostSpec;
+    return eligibleHosts.get(randomIndex);
   }
 }
