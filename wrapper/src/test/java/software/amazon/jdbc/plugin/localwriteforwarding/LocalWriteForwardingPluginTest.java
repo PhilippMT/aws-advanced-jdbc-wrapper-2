@@ -18,8 +18,11 @@ package software.amazon.jdbc.plugin.localwriteforwarding;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.mock;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import software.amazon.jdbc.PluginService;
@@ -144,5 +147,31 @@ class LocalWriteForwardingPluginTest {
     // Test OFF
     props.setProperty("localWriteForwardingConsistencyMode", "OFF");
     plugin = new LocalWriteForwardingPlugin(mockService, props);
+  }
+
+  @Test
+  void testInvalidConsistencyModeRejected() throws SQLException {
+    final PluginService mockService = mock(PluginService.class);
+    final Properties props = new Properties();
+    final LocalWriteForwardingPlugin plugin = new LocalWriteForwardingPlugin(mockService, props);
+    
+    // Create a mock connection
+    final Connection mockConnection = mock(Connection.class);
+    
+    // Test that invalid mode is rejected
+    try {
+      plugin.setConsistencyMode(mockConnection, "INVALID_MODE");
+      fail("Should have thrown IllegalArgumentException for invalid consistency mode");
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("Invalid consistency mode"));
+    }
+    
+    // Test SQL injection attempt is rejected
+    try {
+      plugin.setConsistencyMode(mockConnection, "SESSION'; DROP TABLE users; --");
+      fail("Should have thrown IllegalArgumentException for SQL injection attempt");
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("Invalid consistency mode"));
+    }
   }
 }

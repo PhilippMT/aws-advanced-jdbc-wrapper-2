@@ -20,6 +20,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -78,6 +79,19 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
           add(JdbcMethod.PREPAREDSTATEMENT_EXECUTEQUERY.methodName);
         }
       });
+
+  // DDL keywords that cannot use write forwarding - declared as static to avoid recreation
+  private static final String[] DDL_KEYWORDS = {
+    "CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME ",
+    "GRANT ", "REVOKE ", "ANALYZE ", "CLUSTER ", "VACUUM ",
+    "LOCK ", "SAVEPOINT ", "LISTEN ", "NOTIFY ",
+    "REASSIGN ", "SECURITY LABEL"
+  };
+
+  // Valid consistency modes for input validation
+  private static final Set<String> VALID_CONSISTENCY_MODES = Collections.unmodifiableSet(
+      new HashSet<>(Arrays.asList("SESSION", "EVENTUAL", "GLOBAL", "OFF")));
+
 
   public static final AwsWrapperProperty ENABLE_LOCAL_WRITE_FORWARDING =
       new AwsWrapperProperty(
@@ -200,16 +214,25 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
    * @param conn the database connection
    * @param mode the consistency mode (SESSION, EVENTUAL, GLOBAL, or OFF)
    * @throws SQLException if setting the parameter fails
+   * @throws IllegalArgumentException if mode is not a valid consistency mode
    */
   protected void setConsistencyMode(final Connection conn, final String mode) throws SQLException {
     if (mode == null || "OFF".equalsIgnoreCase(mode)) {
       return;
     }
 
+    // Validate mode to prevent SQL injection
+    final String upperMode = mode.toUpperCase();
+    if (!VALID_CONSISTENCY_MODES.contains(upperMode)) {
+      throw new IllegalArgumentException(
+          "Invalid consistency mode: " + mode + ". Valid values are: SESSION, EVENTUAL, GLOBAL, OFF");
+    }
+
     try (final Statement stmt = conn.createStatement()) {
-      final String sql = "SET apg_write_forward.consistency_mode = '" + mode + "'";
+      // Use validated mode - safe from SQL injection
+      final String sql = "SET apg_write_forward.consistency_mode = '" + upperMode + "'";
       stmt.execute(sql);
-      LOGGER.fine("Set consistency mode to: " + mode);
+      LOGGER.fine("Set consistency mode to: " + upperMode);
     } catch (SQLException e) {
       LOGGER.warning("Failed to set consistency mode: " + e.getMessage());
       throw e;
@@ -231,15 +254,8 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
 
     final String normalized = sql.trim().toUpperCase();
     
-    // List of DDL keywords that cannot use write forwarding
-    final String[] ddlKeywords = {
-      "CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME ",
-      "GRANT ", "REVOKE ", "ANALYZE ", "CLUSTER ", "VACUUM ",
-      "LOCK ", "SAVEPOINT ", "LISTEN ", "NOTIFY ",
-      "REASSIGN ", "SECURITY LABEL"
-    };
-
-    for (String keyword : ddlKeywords) {
+    // Check against static DDL keywords array
+    for (String keyword : DDL_KEYWORDS) {
       if (normalized.startsWith(keyword)) {
         return true;
       }
