@@ -18,8 +18,7 @@ package software.amazon.jdbc.plugin.localwriteforwarding;
 
 import java.util.Properties;
 import software.amazon.jdbc.ConnectionPluginFactory;
-import software.amazon.jdbc.ConnectionProvider;
-import software.amazon.jdbc.PluginService;
+import software.amazon.jdbc.util.FullServicesContainer;
 
 /**
  * Factory class for creating {@link LocalWriteForwardingPlugin} instances.
@@ -28,9 +27,8 @@ public class LocalWriteForwardingPluginFactory implements ConnectionPluginFactor
 
   @Override
   public LocalWriteForwardingPlugin getInstance(
-      final PluginService pluginService,
-      final ConnectionProvider connectionProvider,
+      final FullServicesContainer servicesContainer,
       final Properties props) {
-    return new LocalWriteForwardingPlugin(pluginService, props);
+    return new LocalWriteForwardingPlugin(servicesContainer.getPluginService(), props);
   }
 }
