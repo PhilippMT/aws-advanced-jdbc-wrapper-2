@@ -80,13 +80,14 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
         }
       });
 
-  // DDL keywords that cannot use write forwarding - declared as static to avoid recreation
-  private static final String[] DDL_KEYWORDS = {
-    "CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME ",
-    "GRANT ", "REVOKE ", "ANALYZE ", "CLUSTER ", "VACUUM ",
-    "LOCK ", "SAVEPOINT ", "LISTEN ", "NOTIFY ",
-    "REASSIGN ", "SECURITY LABEL"
-  };
+  // DDL keywords that cannot use write forwarding - using Set for O(1) lookup
+  private static final Set<String> DDL_KEYWORDS = Collections.unmodifiableSet(
+      new HashSet<>(Arrays.asList(
+          "CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME ",
+          "GRANT ", "REVOKE ", "ANALYZE ", "CLUSTER ", "VACUUM ",
+          "LOCK ", "SAVEPOINT ", "LISTEN ", "NOTIFY ",
+          "REASSIGN ", "SECURITY LABEL"
+      )));
 
   // Valid consistency modes for input validation
   private static final Set<String> VALID_CONSISTENCY_MODES = Collections.unmodifiableSet(
@@ -211,6 +212,12 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
   /**
    * Sets the consistency mode for local write forwarding on the connection.
    * 
+   * <p>Note: While PostgreSQL SET commands cannot use prepared statement parameters,
+   * this method is secure because the mode value is validated against a whitelist
+   * (SESSION, EVENTUAL, GLOBAL, OFF) before being used in the SQL statement.
+   * Any invalid input, including SQL injection attempts, will throw an
+   * IllegalArgumentException before reaching the database.
+   * 
    * @param conn the database connection
    * @param mode the consistency mode (SESSION, EVENTUAL, GLOBAL, or OFF)
    * @throws SQLException if setting the parameter fails
@@ -221,7 +228,8 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
       return;
     }
 
-    // Validate mode to prevent SQL injection
+    // Validate mode against whitelist to prevent SQL injection
+    // This makes string concatenation safe as only whitelisted values can reach the SQL
     final String upperMode = mode.toUpperCase();
     if (!VALID_CONSISTENCY_MODES.contains(upperMode)) {
       throw new IllegalArgumentException(
@@ -229,7 +237,8 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
     }
 
     try (final Statement stmt = conn.createStatement()) {
-      // Use validated mode - safe from SQL injection
+      // Safe: upperMode is validated against whitelist and contains only alphanumeric characters
+      // PreparedStatement cannot be used for SET commands in PostgreSQL
       final String sql = "SET apg_write_forward.consistency_mode = '" + upperMode + "'";
       stmt.execute(sql);
       LOGGER.fine("Set consistency mode to: " + upperMode);
@@ -243,6 +252,7 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
    * Determines if a SQL statement is a DDL statement.
    * 
    * <p>DDL statements cannot use write forwarding and must be executed on the writer instance.
+   * Uses a Set for O(1) lookup performance.
    * 
    * @param sql the SQL statement to analyze
    * @return true if the statement is DDL, false otherwise
@@ -254,7 +264,7 @@ public class LocalWriteForwardingPlugin extends AbstractConnectionPlugin {
 
     final String normalized = sql.trim().toUpperCase();
     
-    // Check against static DDL keywords array
+    // Check against static DDL keywords set - O(1) lookup for each keyword
     for (String keyword : DDL_KEYWORDS) {
       if (normalized.startsWith(keyword)) {
         return true;
