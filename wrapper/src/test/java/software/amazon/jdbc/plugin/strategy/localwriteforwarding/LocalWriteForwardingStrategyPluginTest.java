@@ -323,9 +323,9 @@ public class LocalWriteForwardingStrategyPluginTest {
   }
 
   @Test
-  void testSameAzSelectionIgnoresRoleForBothReadAndWrite() throws SQLException {
-    // Verify that same-AZ selection ignores role - selects the reader
-    // even when WRITER role is requested, since local write forwarding allows this.
+  void testSameAzHostSelectedConsistentlyRegardlessOfRequestedRole() throws SQLException {
+    // Verify that the same host is selected for both READER and WRITER roles,
+    // confirming role-agnostic same-AZ selection with local write forwarding.
     List<HostSpec> hosts = Arrays.asList(readerInAz1, readerInAz2, readerInAz3);
 
     when(mockHostResponseTimeService.getResponseTime(any())).thenReturn(100);
