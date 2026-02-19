@@ -51,6 +51,7 @@ import software.amazon.jdbc.plugin.readwritesplitting.ReadWriteSplittingPlugin;
 import software.amazon.jdbc.plugin.srw.SimpleReadWriteSplittingPlugin;
 import software.amazon.jdbc.plugin.staledns.AuroraStaleDnsPlugin;
 import software.amazon.jdbc.plugin.strategy.fastestresponse.FastestResponseStrategyPlugin;
+import software.amazon.jdbc.plugin.strategy.localwriteforwarding.LocalWriteForwardingStrategyPlugin;
 import software.amazon.jdbc.profile.ConfigurationProfile;
 import software.amazon.jdbc.util.FullServicesContainer;
 import software.amazon.jdbc.util.Messages;
@@ -94,6 +95,7 @@ public class ConnectionPluginManager implements CanReleaseResources, Wrapper, St
           put(SimpleReadWriteSplittingPlugin.class, "plugin:srw");
           put(GdbReadWriteSplittingPlugin.class, "plugin:gdbReadWriteSplitting");
           put(FastestResponseStrategyPlugin.class, "plugin:fastestResponseStrategy");
+          put(LocalWriteForwardingStrategyPlugin.class, "plugin:localWriteForwardingStrategy");
           put(DefaultConnectionPlugin.class, "plugin:targetDriver");
           put(AuroraInitialConnectionStrategyPlugin.class, "plugin:initialConnection");
           put(CustomEndpointPlugin.class, "plugin:customEndpoint");

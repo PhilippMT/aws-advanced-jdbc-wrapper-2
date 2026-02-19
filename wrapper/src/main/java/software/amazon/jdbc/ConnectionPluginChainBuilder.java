@@ -53,6 +53,7 @@ import software.amazon.jdbc.plugin.readwritesplitting.ReadWriteSplittingPluginFa
 import software.amazon.jdbc.plugin.srw.SimpleReadWriteSplittingPluginFactory;
 import software.amazon.jdbc.plugin.staledns.AuroraStaleDnsPluginFactory;
 import software.amazon.jdbc.plugin.strategy.fastestresponse.FastestResponseStrategyPluginFactory;
+import software.amazon.jdbc.plugin.strategy.localwriteforwarding.LocalWriteForwardingStrategyPluginFactory;
 import software.amazon.jdbc.profile.ConfigurationProfile;
 import software.amazon.jdbc.util.FullServicesContainer;
 import software.amazon.jdbc.util.Messages;
@@ -91,6 +92,7 @@ public class ConnectionPluginChainBuilder {
           put("connectTime", new ConnectTimeConnectionPluginFactory());
           put("dev", new DeveloperConnectionPluginFactory());
           put("fastestResponseStrategy", new FastestResponseStrategyPluginFactory());
+          put("localWriteForwardingStrategy", new LocalWriteForwardingStrategyPluginFactory());
           put("initialConnection", new AuroraInitialConnectionStrategyPluginFactory());
           put("limitless", new LimitlessConnectionPluginFactory());
           put("bg", new BlueGreenConnectionPluginFactory());
@@ -121,6 +123,7 @@ public class ConnectionPluginChainBuilder {
           put(HostMonitoringConnectionPluginFactory.class, 800);
           put(software.amazon.jdbc.plugin.efm2.HostMonitoringConnectionPluginFactory.class, 810);
           put(FastestResponseStrategyPluginFactory.class, 900);
+          put(LocalWriteForwardingStrategyPluginFactory.class, 910);
           put(LimitlessConnectionPluginFactory.class, 950);
           put(IamAuthConnectionPluginFactory.class, 1000);
           put(AwsSecretsManagerConnectionPluginFactory.class, 1100);
